@@ -44,22 +44,26 @@ class Command(BaseCommand):
                 'name': 'Test Two',
             }
 
+            public = tenant_class.objects.get_or_create(**tenant_params1)
+            tenant1 = tenant_class.objects.get_or_create(**tenant_params2)
+            tenant2 = tenant_class.objects.get_or_create(**tenant_params3)
+
             domain_params1 = {
                 'domain': 'testproject.localhost',
+                'tenant': public
             }
 
             domain_params2 = {
                 'domain': 'testone.testproject.localhost',
+                'tenant': tenant1
             }
 
             domain_params3 = {
                 'domain': 'testtwo.testproject.localhost',
+                'tenant': tenant2
             }
 
 
-            tenant_class.objects.get_or_create(**tenant_params1)
-            tenant_class.objects.get_or_create(**tenant_params2)
-            tenant_class.objects.get_or_create(**tenant_params3)
 
             domain_class.objects.create(**domain_params1)
             domain_class.objects.create(**domain_params2)
