@@ -112,6 +112,7 @@ DATABASE_ROUTERS = (
 )
 
 TENANT_MODEL = 'tenants.Tenant'
+TENANT_DOMAIN_MODEL = "customers.Domain"
 
 # Password validation
 # https://docs.djangoproject.com/en/3.0/ref/settings/#auth-password-validators
@@ -196,3 +197,5 @@ CACHES = {
 
 
 SCHEMAS_TO_BE_EXCLUDED_BY_SCHEDULER = ['public']
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
