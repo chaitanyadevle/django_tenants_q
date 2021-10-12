@@ -6,15 +6,11 @@ Django Tenants Q is a custom implementation for Django-Q cluster for projects th
 
 
 
+> **Note**: This Library is the replica of the library [django-tenant-schemas-q](https://github.com/rajeshyogeshwar/django-tenant-schemas-q)
 
->
-> **Disclaimer**: This Library is the replica of the library [django-tenant-schemas-q](https://github.com/rajeshyogeshwar/django-tenant-schemas-q)
 > Full Credit goes to the author [Rajesh Yogeshwar](https://github.com/rajeshyogeshwar/)
+
 > I have just modified it to work with django_tenants.
->
-
-
-
 
 
 
