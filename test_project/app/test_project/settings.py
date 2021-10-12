@@ -112,7 +112,7 @@ DATABASE_ROUTERS = (
 )
 
 TENANT_MODEL = 'tenants.Tenant'
-TENANT_DOMAIN_MODEL = "customers.Domain"
+TENANT_DOMAIN_MODEL = "tenants.Domain"
 
 # Password validation
 # https://docs.djangoproject.com/en/3.0/ref/settings/#auth-password-validators
