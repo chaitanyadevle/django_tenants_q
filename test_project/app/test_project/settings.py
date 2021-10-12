@@ -102,7 +102,7 @@ DATABASES = {
         'PASSWORD': 'password',
         'NAME': 'testdb',
         'TEST': {
-            'NAME': 'maindb'
+            'NAME': 'testdb'
         }
     }
 }
