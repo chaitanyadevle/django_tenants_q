@@ -50,17 +50,17 @@ class Command(BaseCommand):
 
             domain_params1 = {
                 'domain': 'testproject.localhost',
-                'tenant': public
+                'tenant': public[0]
             }
 
             domain_params2 = {
                 'domain': 'testone.testproject.localhost',
-                'tenant': tenant1
+                'tenant': tenant1[0]
             }
 
             domain_params3 = {
                 'domain': 'testtwo.testproject.localhost',
-                'tenant': tenant2
+                'tenant': tenant2[0]
             }
 
 
