@@ -19,6 +19,7 @@ class Command(BaseCommand):
             # call_command('migrate_schemas', '--tenant')
 
             tenant_class = get_tenant_model()
+            print(tenant_class,"*"*40)
             domain_class = get_tenant_domain_model()
 
             #Check if Public Schema Alredy Exists
