@@ -26,8 +26,8 @@ class Command(BaseCommand):
             if tenant_class.objects.filter(schema_name = 'public').exists():
                 return (self.stdout.write(self.style.ERROR('Public schema already exists.')))
 
-            if not settings.PUBLIC_DOMAIN:
-                return (self.stdout.write(self.style.ERROR('Public Domain Variable missing in settings file.')))
+            # if not settings.PUBLIC_DOMAIN:
+            #     return (self.stdout.write(self.style.ERROR('Public Domain Variable missing in settings file.')))
 
             tenant_params1 = {
                 'schema_name': 'public',
