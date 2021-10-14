@@ -5,7 +5,7 @@ with open('README.md', 'r') as f:
 
 setuptools.setup(
     name='django_tenants_q',
-    version='1.0.1',
+    version='1.0.0',
     author='Chaitanya Devale',
     author_email='chaitanyadevale11@gmail.com',
     include_package_data=True,
@@ -22,8 +22,8 @@ setuptools.setup(
     ],
     python_requires='>=3.7',
     install_requires=[
-        "django-tenants>=1.10.0",
-        "django-q>=1.2.1",
-        "croniter==0.3.36"
+        "django-tenants>=3.3.2",
+        "django-q>=1.3.9",
+        "croniter>=1.0.15"
     ]
 )
