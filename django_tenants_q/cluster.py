@@ -20,8 +20,18 @@ import arrow
 from croniter import croniter
 from django_tenants.utils  import schema_context, get_tenant_model
 
+
 # Django
-from django import db
+from django import core, db
+from django.apps.registry import apps
+
+try:
+    apps.check_apps_ready()
+except core.exceptions.AppRegistryNotReady:
+    import django
+
+    django.setup()
+
 from django.conf import settings
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
