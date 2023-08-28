@@ -23,7 +23,7 @@ setuptools.setup(
     python_requires='>=3.7',
     install_requires=[
         "django-tenants>=3.3.2",
-        "django-q>=1.3.9",
+        "django-q2>=1.5.4",
         "croniter>=1.0.15"
     ]
 )
