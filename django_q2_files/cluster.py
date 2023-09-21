@@ -1,35 +1,18 @@
-# Future
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
-
-from django_tenants_q.monitor import monitor
-from django_tenants_q.pusher import pusher
-from django_tenants_q.scheduler import scheduler
-from django_tenants_q.worker import worker
-
-
-
 # Standard
-import ast
-import uuid
 import signal
 import socket
-import traceback
-import importlib
-from time import sleep
-from inspect import getfullargspec
+import uuid
 from multiprocessing import Event, Process, Value, current_process
-
-# external
-from croniter import croniter
-from django_tenants.utils  import schema_context, get_tenant_model
-
+from time import sleep
 
 # Django
 from django import core, db
 from django.apps.registry import apps
+
+from django_q.monitor import monitor
+from django_q.pusher import pusher
+from django_q.scheduler import scheduler
+from django_q.worker import worker
 
 try:
     apps.check_apps_ready()
@@ -38,33 +21,27 @@ except core.exceptions.AppRegistryNotReady:
 
     django.setup()
 
-from django.conf import settings
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 # Local
+import django_q.tasks
 from django_q.brokers import Broker, get_broker
-from django_q.queues import Queue
-from django_q.brokers import get_broker
-from django_q.brokers.orm import ORM
-from django_q.humanhash import humanize
-from django_q.signals import pre_execute
-from django_q.status import Stat, Status
-from django_q.models import Task, Success, Schedule
-from django_q.signing import SignedPackage, BadSignature
 from django_q.conf import Conf, get_ppid, logger, psutil, setproctitle
-from django_q.cluster import close_old_django_connections, set_cpu_affinity
-from django_tenants_q.utils import QUtilities
+from django_q.humanhash import humanize
+from django_q.models import Schedule, Success, Task
+from django_q.queues import Queue
+from django_q.signing import BadSignature, SignedPackage
+from django_q.status import Stat, Status
+
+from .utils import get_func_repr
 
 
-class MultiTenantCluster(object):
-
-    """
-    MultiTenantCluster is mirror implementation of Django Q cluster but with added magic for making it work with Django Tenant Schemas package
-    """
-
-    def __init__(self, broker: Broker =None):
-        self.broker = broker
+class Cluster:
+    def __init__(self, broker: Broker = None):
+        # Cluster do not need an init or default broker except for testing,
+        # The sentinel will create a broker for cluster and utilize ALT_CLUSTERS config in Conf.
+        self.broker = broker  # DON'T USE get_broker() to set a default broker here.
         self.sentinel = None
         self.stop_event = None
         self.start_event = None
@@ -78,10 +55,6 @@ class MultiTenantCluster(object):
     def start(self) -> int:
         if setproctitle:
             setproctitle.setproctitle(f"qcluster {current_process().name} {self.name}")
-        
-        if isinstance(self.broker, ORM):
-            logger.info(_(f"Django ORM broker is not supported"))
-            return
         # Start Sentinel
         self.stop_event = Event()
         self.start_event = Event()
@@ -102,7 +75,7 @@ class MultiTenantCluster(object):
             sleep(0.1)
         return self.pid
 
-    def stop(self):
+    def stop(self) -> bool:
         if not self.sentinel.is_alive():
             return False
         logger.info(_("Q Cluster %(name)s stopping.") % {"name": self.name})
@@ -122,7 +95,6 @@ class MultiTenantCluster(object):
             }
         )
         self.stop()
-
 
     @property
     def stat(self) -> Status:
@@ -156,14 +128,14 @@ class MultiTenantCluster(object):
         return self.start_event is None and self.stop_event is None and self.sentinel
 
 
-class Sentinel(object):
+class Sentinel:
     def __init__(
         self,
         stop_event,
         start_event,
         cluster_id,
         broker=None,
-        timeout=Conf.TIMEOUT,
+        timeout=None,
         start=True,
     ):
         # Make sure we catch signals for the pool
@@ -180,7 +152,7 @@ class Sentinel(object):
         self.start_event = start_event
         self.pool_size = Conf.WORKERS
         self.pool = []
-        self.timeout = timeout
+        self.timeout = timeout or Conf.TIMEOUT
         self.task_queue = (
             Queue(maxsize=Conf.QUEUE_LIMIT) if Conf.QUEUE_LIMIT else Queue()
         )
@@ -191,12 +163,16 @@ class Sentinel(object):
         if start:
             self.start()
 
+    def queue_name(self):
+        # multi-queue: cluster name is (broker's) queue_name
+        return self.broker.list_key if self.broker else "--"
+
     def start(self):
         self.broker.ping()
         self.spawn_cluster()
         self.guard()
 
-    def status(self):
+    def status(self) -> str:
         if not self.start_event.is_set() and not self.stop_event.is_set():
             return Conf.STARTING
         elif self.start_event.is_set() and not self.stop_event.is_set():
@@ -208,7 +184,7 @@ class Sentinel(object):
                 return Conf.STOPPING
             return Conf.STOPPED
 
-    def spawn_process(self, target, *args):
+    def spawn_process(self, target, *args) -> Process:
         """
         :type target: function or class
         """
@@ -221,16 +197,15 @@ class Sentinel(object):
         p.start()
         return p
 
-    def spawn_pusher(self):
+    def spawn_pusher(self) -> Process:
         return self.spawn_process(pusher, self.task_queue, self.event_out, self.broker)
 
     def spawn_worker(self):
         self.spawn_process(
-            worker, self.task_queue, self.result_queue, Value(
-                "f", -1), self.timeout
+            worker, self.task_queue, self.result_queue, Value("f", -1), self.timeout
         )
 
-    def spawn_monitor(self):
+    def spawn_monitor(self) -> Process:
         return self.spawn_process(monitor, self.result_queue, self.broker)
 
     def reincarnate(self, process):
@@ -238,6 +213,7 @@ class Sentinel(object):
         :param process: the process to reincarnate
         :type process: Process or None
         """
+        # close connections before spawning new process
         if not Conf.SYNC:
             db.connections.close_all()
         if process == self.monitor:
@@ -294,7 +270,7 @@ class Sentinel(object):
         self.pool = []
         Stat(self).save()
         # close connections before spawning new process
-        if not Conf.SYNC
+        if not Conf.SYNC:
             db.connections.close_all()
         # spawn worker pool
         for __ in range(self.pool_size):
@@ -393,6 +369,7 @@ class Sentinel(object):
             count += 1
         # Final status
         Stat(self).save()
+
 
 def set_cpu_affinity(n: int, process_ids: list, actual: bool = not Conf.TESTING):
     """
