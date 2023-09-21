@@ -182,6 +182,10 @@ class Sentinel(object):
         if start:
             self.start()
 
+    def queue_name(self):
+        # multi-queue: cluster name is (broker's) queue_name
+        return self.broker.list_key if self.broker else "--"
+
     def start(self):
         self.broker.ping()
         self.spawn_cluster()
