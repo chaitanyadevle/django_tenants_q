@@ -143,7 +143,7 @@ def save_task(task, broker: Broker):
                         and existing_task.attempt_count >= Conf.MAX_ATTEMPTS
                     ):
                         broker.acknowledge(task["ack_id"])
-                except: Task.DoesNotExist:
+                except Task.DoesNotExist:
                     # convert func to string
                     func = get_func_repr(task["func"])
                     Task.objects.create(
