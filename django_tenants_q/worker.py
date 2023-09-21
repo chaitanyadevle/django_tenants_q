@@ -9,8 +9,7 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django_q.conf import Conf, error_reporter, logger, resource, setproctitle
 from django_q.signals import post_spawn, pre_execute
-from django_q.utils import get_func_repr
-from django_q.cluster import close_old_django_connections
+from django_q.utils import get_func_repr, close_old_django_connections
 try:
     import psutil
 except ImportError:
