@@ -284,7 +284,7 @@ class Sentinel(object):
         self.pool = []
         Stat(self).save()
         # close connections before spawning new process
-        if not Conf.SYNC
+        if not Conf.SYNC:
             db.connections.close_all()
         # spawn worker pool
         for __ in range(self.pool_size):
