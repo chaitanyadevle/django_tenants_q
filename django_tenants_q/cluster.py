@@ -10,22 +10,13 @@ from django_tenants_q.scheduler import scheduler
 from django_tenants_q.worker import worker
 
 
-
 # Standard
-import ast
 import uuid
 import signal
 import socket
-import traceback
-import importlib
 from time import sleep
 from inspect import getfullargspec
 from multiprocessing import Event, Process, Value, current_process
-
-# external
-from croniter import croniter
-from django_tenants.utils  import schema_context, get_tenant_model
-
 
 # Django
 from django import core, db
@@ -38,7 +29,6 @@ except core.exceptions.AppRegistryNotReady:
 
     django.setup()
 
-from django.conf import settings
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
