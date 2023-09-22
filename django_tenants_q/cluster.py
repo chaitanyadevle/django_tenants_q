@@ -1,19 +1,15 @@
 # Future
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
 
-# Standard
-import uuid
 import signal
 import socket
-from time import sleep
+# Standard
+import uuid
 from multiprocessing import Event, Process, Value, current_process
+from time import sleep
 
 # Django
-from django import core, db
-from django.apps.registry import apps
 
 try:
     apps.check_apps_ready()
@@ -21,28 +17,28 @@ except core.exceptions.AppRegistryNotReady:
     import django
 
     django.setup()
-from django.utils import timezone
-from django.utils.translation import gettext_lazy as _
 
-# Local
+from django import core, db
+from django.apps.registry import apps
+
 from django_tenants_q.monitor import monitor
 from django_tenants_q.pusher import pusher
 from django_tenants_q.scheduler import scheduler
 from django_tenants_q.worker import worker
-from django_q.brokers import Broker, get_broker
-from django_q.queues import Queue
-from django_q.brokers import get_broker
-from django_q.brokers.orm import ORM
-from django_q.humanhash import humanize
-from django_q.signals import pre_execute
-from django_q.status import Stat, Status
-from django_q.models import Task, Success, Schedule
-from django_q.signing import SignedPackage, BadSignature
-from django_q.conf import Conf, get_ppid, logger, psutil, setproctitle
-from django_q.cluster import set_cpu_affinity
-from django_q.utils import close_old_django_connections
-from django_tenants_q.utils import QUtilities
 
+from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
+from django_q.brokers import Broker, get_broker
+from django_q.brokers.orm import ORM
+from django_q.cluster import set_cpu_affinity
+from django_q.conf import Conf, get_ppid, logger, psutil, setproctitle
+from django_q.humanhash import humanize
+from django_q.models import Schedule, Success, Task
+from django_q.queues import Queue
+from django_q.signals import pre_execute
+from django_q.signing import BadSignature, SignedPackage
+from django_q.status import Stat, Status
+from django_q.utils import close_old_django_connections
 
 
 class MultiTenantCluster(object):
@@ -151,7 +147,7 @@ class Sentinel(object):
         start_event,
         cluster_id,
         broker=None,
-        timeout=Conf.TIMEOUT,
+        timeout=None,
         start=True,
     ):
         # Make sure we catch signals for the pool
@@ -168,7 +164,7 @@ class Sentinel(object):
         self.start_event = start_event
         self.pool_size = Conf.WORKERS
         self.pool = []
-        self.timeout = timeout
+        self.timeout = timeout or Conf.TIMEOUT
         self.task_queue = (
             Queue(maxsize=Conf.QUEUE_LIMIT) if Conf.QUEUE_LIMIT else Queue()
         )
@@ -385,6 +381,7 @@ class Sentinel(object):
             count += 1
         # Final status
         Stat(self).save()
+
 
 def set_cpu_affinity(n: int, process_ids: list, actual: bool = not Conf.TESTING):
     """
