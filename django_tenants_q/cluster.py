@@ -466,12 +466,13 @@ def worker(
             timer.value = -1  # Idle
             task_count += 1
             # Get the function from the task
-            logger.info(_(f'{proc_name} processing [{task["name"]}] on {schema_name}'))
+            logger.info(_(f'{proc_name} processing [{task["name"]}]'))
             f = task["func"]
             # Log task creation and set process name
             # Get the function from the task
             func_name = get_func_repr(f)
             task_name = task["name"]
+            schema_name = kwargs.get('schema_name', None)
             task_desc = _("%(proc_name)s processing %(task_name)s '%(func_name)s' on %(schema_name)s") % {
                 "proc_name": proc_name,
                 "func_name": func_name,
