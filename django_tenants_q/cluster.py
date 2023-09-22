@@ -737,7 +737,6 @@ def scheduler(broker=None):
         for tenant in tenant_model.objects.exclude(schema_name__in=django_tenants_to_exclude):
             with schema_context(tenant.schema_name):
 
-            try:
                 # Only default cluster will handler schedule with default(null) cluster
                 Q_default = (
                     db.models.Q(cluster__isnull=True)
@@ -835,7 +834,5 @@ def scheduler(broker=None):
                                 s.repeats = 0
                             # save the schedule
                             s.save()
-            except Exception as e:
-                logger.critical(e)
     except Exception:
         logger.exception("Could not create task from schedule")
