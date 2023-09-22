@@ -8,8 +8,7 @@ from django.utils.translation import gettext_lazy as _
 from django_q.brokers import Broker, get_broker
 from django_q.conf import Conf, logger
 from django_q.models import Schedule
-from django_q.utils import localtime
-from django_q.cluster import close_old_django_connections
+from django_q.utils import localtime, close_old_django_connections
 from django.conf import settings
 
 from django_tenants.utils import get_tenant_model, schema_context
