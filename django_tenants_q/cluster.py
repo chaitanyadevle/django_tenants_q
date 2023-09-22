@@ -1,29 +1,22 @@
 # Future
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
 
 # Standard
+import pydoc
 import ast
-import uuid
 import signal
 import socket
 import traceback
-import importlib
-from time import sleep
+import uuid
 from inspect import getfullargspec
 from multiprocessing import Event, Process, Value, current_process
-
-# external
-import arrow
-from croniter import croniter
-from django_tenants.utils  import schema_context, get_tenant_model
-
+from time import sleep
 
 # Django
 from django import core, db
 from django.apps.registry import apps
+from django_tenants.utils import get_tenant_model, schema_context
 
 try:
     apps.check_apps_ready()
@@ -35,19 +28,19 @@ except core.exceptions.AppRegistryNotReady:
 from django.conf import settings
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
-
+from django_q.brokers import Broker, get_broker
+from django_q.brokers.orm import ORM
+from django_q.cluster import set_cpu_affinity
+from django_q.conf import Conf, error_reporter, get_ppid, logger, psutil, setproctitle, resource
+from django_q.humanhash import humanize
+from django_q.models import Schedule, Success, Task
 # Local
 from django_q.queues import Queue
-from django_q.brokers import get_broker
-from django_q.brokers.orm import ORM
-from django_q.humanhash import humanize
-from django_q.signals import pre_execute
+from django_q.signals import pre_execute, post_spawn, post_execute
+from django_q.signing import BadSignature, SignedPackage
 from django_q.status import Stat, Status
-from django_q.models import Task, Success, Schedule
-from django_q.signing import SignedPackage, BadSignature
-from django_q.conf import Conf, logger, psutil, get_ppid, error_reporter
-from django_q.cluster import set_cpu_affinity
-from django_q.utils import close_old_django_connections
+from django_q.utils import close_old_django_connections, get_func_repr, localtime
+
 from django_tenants_q.utils import QUtilities
 
 
@@ -57,19 +50,23 @@ class MultiTenantCluster(object):
     MultiTenantCluster is mirror implementation of Django Q cluster but with added magic for making it work with Django Tenant Schemas package
     """
 
-    def __init__(self, broker=None):
-        self.broker = broker or get_broker()
+    def __init__(self, broker: Broker = None):
+        # Cluster do not need an init or default broker except for testing,
+        # The sentinel will create a broker for cluster and utilize ALT_CLUSTERS config in Conf.
+        self.broker = broker  # DON'T USE get_broker() to set a default broker here.
         self.sentinel = None
         self.stop_event = None
         self.start_event = None
         self.pid = current_process().pid
         self.cluster_id = uuid.uuid4()
         self.host = socket.gethostname()
-        self.timeout = Conf.TIMEOUT
+        self.timeout = None
         signal.signal(signal.SIGTERM, self.sig_handler)
         signal.signal(signal.SIGINT, self.sig_handler)
 
-    def start(self):
+    def start(self) -> int:
+        if setproctitle:
+            setproctitle.setproctitle(f"qcluster {current_process().name} {self.name}")
         # Start Sentinel
 
         if isinstance(self.broker, ORM):
@@ -80,6 +77,7 @@ class MultiTenantCluster(object):
         self.start_event = Event()
         self.sentinel = Process(
             target=Sentinel,
+            name=f"Process-{uuid.uuid4().hex}",
             args=(
                 self.stop_event,
                 self.start_event,
@@ -89,50 +87,52 @@ class MultiTenantCluster(object):
             ),
         )
         self.sentinel.start()
-        logger.info(_(f"Q Cluster {self.name} starting."))
+        logger.info(_("Q Cluster %(name)s starting.") % {"name": self.name})
         while not self.start_event.is_set():
             sleep(0.1)
         return self.pid
 
-    def stop(self):
+    def stop(self) -> bool:
         if not self.sentinel.is_alive():
             return False
-        logger.info(_(f"Q Cluster {self.name} stopping."))
+        logger.info(_("Q Cluster %(name)s stopping.") % {"name": self.name})
         self.stop_event.set()
         self.sentinel.join()
-        logger.info(_(f"Q Cluster {self.name} has stopped."))
+        logger.info(_("Q Cluster %(name)s has stopped.") % {"name": self.name})
         self.start_event = None
         self.stop_event = None
         return True
 
     def sig_handler(self, signum, frame):
         logger.debug(
-            _(
-                f'{current_process().name} got signal {Conf.SIGNAL_NAMES.get(signum, "UNKNOWN")}'
-            )
+            _("%(name)s got signal %(signal)s")
+            % {
+                "name": current_process().name,
+                "signal": Conf.SIGNAL_NAMES.get(signum, "UNKNOWN"),
+            }
         )
         self.stop()
 
     @property
-    def stat(self):
+    def stat(self) -> Status:
         if self.sentinel:
             return Stat.get(pid=self.pid, cluster_id=self.cluster_id)
         return Status(pid=self.pid, cluster_id=self.cluster_id)
 
     @property
-    def name(self):
+    def name(self) -> str:
         return humanize(self.cluster_id.hex)
 
     @property
-    def is_starting(self):
+    def is_starting(self) -> bool:
         return self.stop_event and self.start_event and not self.start_event.is_set()
 
     @property
-    def is_running(self):
+    def is_running(self) -> bool:
         return self.stop_event and self.start_event and self.start_event.is_set()
 
     @property
-    def is_stopping(self):
+    def is_stopping(self) -> bool:
         return (
             self.stop_event
             and self.start_event
@@ -141,7 +141,7 @@ class MultiTenantCluster(object):
         )
 
     @property
-    def has_stopped(self):
+    def has_stopped(self) -> bool:
         return self.start_event is None and self.stop_event is None and self.sentinel
 
 
@@ -152,7 +152,7 @@ class Sentinel(object):
         start_event,
         cluster_id,
         broker=None,
-        timeout=Conf.TIMEOUT,
+        timeout=None,
         start=True,
     ):
         # Make sure we catch signals for the pool
@@ -169,7 +169,7 @@ class Sentinel(object):
         self.start_event = start_event
         self.pool_size = Conf.WORKERS
         self.pool = []
-        self.timeout = timeout
+        self.timeout = timeout or Conf.TIMEOUT
         self.task_queue = (
             Queue(maxsize=Conf.QUEUE_LIMIT) if Conf.QUEUE_LIMIT else Queue()
         )
@@ -180,12 +180,16 @@ class Sentinel(object):
         if start:
             self.start()
 
+    def queue_name(self):
+        # multi-queue: cluster name is (broker's) queue_name
+        return self.broker.list_key if self.broker else "--"
+    
     def start(self):
         self.broker.ping()
         self.spawn_cluster()
         self.guard()
 
-    def status(self):
+    def status(self) -> str:
         if not self.start_event.is_set() and not self.stop_event.is_set():
             return Conf.STARTING
         elif self.start_event.is_set() and not self.stop_event.is_set():
@@ -197,11 +201,11 @@ class Sentinel(object):
                 return Conf.STOPPING
             return Conf.STOPPED
 
-    def spawn_process(self, target, *args):
+    def spawn_process(self, target, *args) -> Process:
         """
         :type target: function or class
         """
-        p = Process(target=target, args=args)
+        p = Process(target=target, args=args, name=f"Process-{uuid.uuid4().hex}")
         p.daemon = True
         if target == worker:
             p.daemon = Conf.DAEMONIZE_WORKERS
@@ -210,7 +214,7 @@ class Sentinel(object):
         p.start()
         return p
 
-    def spawn_pusher(self):
+    def spawn_pusher(self) -> Process:
         return self.spawn_process(pusher, self.task_queue, self.event_out, self.broker)
 
     def spawn_worker(self):
@@ -219,7 +223,7 @@ class Sentinel(object):
                 "f", -1), self.timeout
         )
 
-    def spawn_monitor(self):
+    def spawn_monitor(self) -> Process:
         return self.spawn_process(monitor, self.result_queue, self.broker)
 
     def reincarnate(self, process):
@@ -227,35 +231,65 @@ class Sentinel(object):
         :param process: the process to reincarnate
         :type process: Process or None
         """
-        close_old_django_connections()
+        if not Conf.SYNC:
+            db.connections.close_all()
         if process == self.monitor:
             self.monitor = self.spawn_monitor()
-            logger.error(
-                _(f"reincarnated monitor {process.name} after sudden death"))
+            logger.critical(
+                _("reincarnated monitor %(name)s after sudden death")
+                % {"name": process.name}
+            )
         elif process == self.pusher:
             self.pusher = self.spawn_pusher()
-            logger.error(
-                _(f"reincarnated pusher {process.name} after sudden death"))
+            logger.critical(
+                _("reincarnated pusher %(name)s after sudden death")
+                % {"name": process.name}
+            )
         else:
             self.pool.remove(process)
             self.spawn_worker()
             if process.timer.value == 0:
-                # only need to terminate on timeout, otherwise we risk destabilizing the queues
+                # only need to terminate on timeout, otherwise we risk destabilizing
+                # the queues
+                task_name = ""
+                if psutil:
+                    try:
+                        process_name = psutil.Process(process.pid).name()
+                        name_splits = process_name.split(" ")
+                        task_name = (
+                            name_splits[3]
+                            if len(name_splits) >= 4 and name_splits[2] == "processing"
+                            else ""
+                        )
+                    except psutil.NoSuchProcess:
+                        pass
                 process.terminate()
-                logger.warn(
-                    _(f"reincarnated worker {process.name} after timeout"))
+                if task_name:
+                    msg = _(
+                        "reincarnated worker %(name)s after timeout while processing task %(task_name)s"
+                    ) % {"name": process.name, "task_name": task_name}
+                else:
+                    msg = _("reincarnated worker %(name)s after timeout") % {
+                        "name": process.name
+                    }
+                logger.critical(msg)
             elif int(process.timer.value) == -2:
-                logger.info(_(f"recycled worker {process.name}"))
+                logger.info(_("recycled worker %(name)s") % {"name": process.name})
             else:
-                logger.error(
-                    _(f"reincarnated worker {process.name} after death"))
+                logger.critical(
+                    _("reincarnated worker %(name)s after death")
+                    % {"name": process.name}
+                )
 
         self.reincarnations += 1
 
     def spawn_cluster(self):
         self.pool = []
         Stat(self).save()
-        close_old_django_connections()
+        # close connections before spawning new process
+        if not Conf.SYNC:
+            db.connections.close_all()
+        # spawn worker pool
         # spawn worker pool
         for __ in range(self.pool_size):
             self.spawn_worker()
@@ -268,13 +302,22 @@ class Sentinel(object):
 
     def guard(self):
         logger.info(
-            _(
-                f"{current_process().name} guarding cluster {humanize(self.cluster_id.hex)}"
-            )
+            _("%(name)s guarding cluster %(cluster_name)s")
+            % {
+                "name": current_process().name,
+                "cluster_name": humanize(self.cluster_id.hex)
+                + f" [{self.queue_name()}]",
+            }
         )
         self.start_event.set()
         Stat(self).save()
-        logger.info(_(f"Q Cluster {humanize(self.cluster_id.hex)} running."))
+        logger.info(
+            _("Q Cluster %(cluster_name)s running.")
+            % {
+                "cluster_name": humanize(self.cluster_id.hex)
+                + f" [{self.queue_name()}]"
+            }
+        )
         counter = 0
         cycle = Conf.GUARD_CYCLE  # guard loop sleep in seconds
         # Guard loop. Runs at least once
@@ -308,7 +351,7 @@ class Sentinel(object):
     def stop(self):
         Stat(self).save()
         name = current_process().name
-        logger.info(_(f"{name} stopping cluster processes"))
+        logger.info(_("%(name)s stopping cluster processes") % {"name": name})
         # Stopping pusher
         self.event_out.set()
         # Wait for it to stop
@@ -333,7 +376,7 @@ class Sentinel(object):
         self.result_queue.close()
         # Wait for the result queue to empty
         self.result_queue.join_thread()
-        logger.info(_(f"{name} waiting for the monitor."))
+        logger.info(_("%(name)s waiting for the monitor.") % {"name": name})
         # Wait for everything to close or time out
         count = 0
         if not self.timeout:
@@ -346,21 +389,27 @@ class Sentinel(object):
         Stat(self).save()
 
 
-def pusher(task_queue, event, broker=None):
+def pusher(task_queue: Queue, event: Event, broker: Broker = None):
     """
     Pulls tasks of the broker and puts them in the task queue
+    :type broker:
     :type task_queue: multiprocessing.Queue
     :type event: multiprocessing.Event
     """
     if not broker:
         broker = get_broker()
+    proc_name = current_process().name
+    if setproctitle:
+        setproctitle.setproctitle(f"qcluster {proc_name} pusher")
     logger.info(
-        _(f"{current_process().name} pushing tasks at {current_process().pid}"))
+        _("%(name)s pushing tasks at %(id)s")
+        % {"name": proc_name, "id": current_process().pid}
+    )
     while True:
         try:
             task_set = broker.dequeue()
-        except Exception as e:
-            logger.error(e, traceback.format_exc())
+        except Exception:
+            logger.exception("Failed to pull task from broker")
             # broker probably crashed. Let the sentinel handle it.
             sleep(10)
             break
@@ -370,28 +419,41 @@ def pusher(task_queue, event, broker=None):
                 # unpack the task
                 try:
                     task = SignedPackage.loads(task[1])
-                except (TypeError, BadSignature) as e:
-                    logger.error(e, traceback.format_exc())
+                except (TypeError, BadSignature):
+                    logger.exception("Failed to push task to queue")
                     broker.fail(ack_id)
                     continue
+                task["cluster"] = Conf.CLUSTER_NAME
                 task["ack_id"] = ack_id
                 task_queue.put(task)
-            logger.debug(_(f"queueing from {broker.list_key}"))
+            logger.debug(
+                _("queueing from %(list_key)s") % {"list_key": broker.list_key}
+            )
         if event.is_set():
             break
-    logger.info(_(f"{current_process().name} stopped pushing tasks"))
+    logger.info(_("%(name)s stopped pushing tasks") % {"name": current_process().name})
 
 
-def worker(task_queue, result_queue, timer, timeout=Conf.TIMEOUT):
+def worker(
+    task_queue: Queue, result_queue: Queue, timer: Value, timeout: int = Conf.TIMEOUT
+):
     """
-    Takes a task from the task queue, tries to execute it and puts the result back in the result queue
+    Takes a task from the task queue, tries to execute it and puts the result back in
+    the result queue
+    :param timeout: number of seconds wait for a worker to finish.
     :type task_queue: multiprocessing.Queue
     :type result_queue: multiprocessing.Queue
     :type timer: multiprocessing.Value
     """
 
-    name = current_process().name
-    logger.info(_(f"{name} ready for work at {current_process().pid}"))
+    proc_name = current_process().name
+    logger.info(
+        _("%(proc_name)s ready for work at %(id)s")
+        % {"proc_name": proc_name, "id": current_process().pid}
+    )
+    post_spawn.send(sender="django_q", proc_name=proc_name)
+    if setproctitle:
+        setproctitle.setproctitle(f"qcluster {proc_name} idle")
     task_count = 0
     if timeout is None:
         timeout = -1
@@ -404,19 +466,41 @@ def worker(task_queue, result_queue, timer, timeout=Conf.TIMEOUT):
             timer.value = -1  # Idle
             task_count += 1
             # Get the function from the task
-            logger.info(_(f'{name} processing [{task["name"]}]'))
+            logger.info(_(f'{proc_name} processing [{task["name"]}]'))
             f = task["func"]
+            # Log task creation and set process name
+            # Get the function from the task
+            func_name = get_func_repr(f)
+            task_name = task["name"]
+            schema_name = task["kwargs"].get('schema_name', None)
+            task_desc = _("%(proc_name)s processing %(task_name)s '%(func_name)s' on %(schema_name)s") % {
+                "proc_name": proc_name,
+                "func_name": func_name,
+                "task_name": task_name,
+                "schema_name": schema_name,
+            }
+            if "group" in task:
+                task_desc += f" [{task['group']}]"
+            logger.info(task_desc)
+
+            if setproctitle:
+                proc_title = f"qcluster {proc_name} processing {task_name} '{func_name}'"
+                if "group" in task:
+                    proc_title += f" [{task['group']}]"
+                setproctitle.setproctitle(proc_title)
+
             # if it's not an instance try to get it from the string
-            if not callable(task["func"]):
-                try:
-                    module, func = f.rsplit(".", 1)
-                    m = importlib.import_module(module)
-                    f = getattr(m, func)
-                except (ValueError, ImportError, AttributeError) as e:
-                    result = (e, False)
-                    if error_reporter:
-                        error_reporter.report()
-            # We're still going
+            if not callable(f):
+                # locate() returns None if f cannot be loaded
+                f = pydoc.locate(f)
+            close_old_django_connections()
+            timer_value = task.pop("timeout", timeout)
+            # signal execution
+            pre_execute.send(sender="django_q", func=f, task=task)
+            # execute the payload
+            timer.value = timer_value  # Busy
+            
+            
             if not result:
                 close_old_django_connections()
                 timer_value = task.pop("timeout", timeout)
@@ -447,6 +531,8 @@ def worker(task_queue, result_queue, timer, timeout=Conf.TIMEOUT):
                     result = (f"{e} : {traceback.format_exc()}", False)
                     if error_reporter:
                         error_reporter.report()
+                    if task.get("sync", False):
+                        raise
             with timer.get_lock():
                 # Process result
                 task["result"] = result[0]
@@ -454,24 +540,40 @@ def worker(task_queue, result_queue, timer, timeout=Conf.TIMEOUT):
                 task["stopped"] = timezone.now()
                 result_queue.put(task)
                 timer.value = -1  # Idle
+                if setproctitle:
+                    setproctitle.setproctitle(f"qcluster {proc_name} idle")
                 # Recycle
-                if task_count == Conf.RECYCLE:
+                if task_count == Conf.RECYCLE or rss_check():
                     timer.value = -2  # Recycled
                     break
-        logger.info(_(f"{name} stopped doing work"))
+        logger.info(_("%(proc_name)s stopped doing work") % {"proc_name": proc_name})
+
     except Exception as e:
         print(e)
 
+def rss_check():
+    if Conf.MAX_RSS:
+        if resource:
+            return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss >= Conf.MAX_RSS
+        elif psutil:
+            return psutil.Process().memory_info().rss >= Conf.MAX_RSS * 1024
+    return False
 
-def monitor(result_queue, broker=None):
+def monitor(result_queue: Queue, broker: Broker = None):
     """
     Gets finished tasks from the result queue and saves them to Django
+    :type broker: brokers.Broker
     :type result_queue: multiprocessing.Queue
     """
     if not broker:
         broker = get_broker()
-    name = current_process().name
-    logger.info(_(f"{name} monitoring at {current_process().pid}"))
+    proc_name = current_process().name
+    if setproctitle:
+        setproctitle.setproctitle(f"qcluster {proc_name} monitor")
+    logger.info(
+        _("%(name)s monitoring at %(id)s")
+        % {"name": proc_name, "id": current_process().pid}
+    )
     for task in iter(result_queue.get, "STOP"):
         # save the result
         if task.get("cached", False):
@@ -482,19 +584,35 @@ def monitor(result_queue, broker=None):
         ack_id = task.pop("ack_id", False)
         if ack_id and (task["success"] or task.get("ack_failure", False)):
             broker.acknowledge(ack_id)
+        # signal execution done
+        post_execute.send(sender="django_q", task=task)
         # log the result
+        info_name = get_func_repr(task["func"])
         if task["success"]:
             # log success
-            logger.info(_(f"Processed [{task['name']}]"))
+            logger.info(
+                _("Processed '%(info_name)s' (%(task_name)s) on %(schema)s")
+                % {"info_name": info_name, "task_name": task["name"], "schema": task["kwargs"].get('schema_name', None)}
+            )
         else:
             # log failure
-            logger.error(_(f"Failed [{task['name']}] - {task['result']}"))
-    logger.info(_(f"{name} stopped monitoring results"))
+            logger.error(
+                _("Failed '%(info_name)s' (%(task_name)s) - %(task_result)s on %(schema)s")
+                % {
+                    "info_name": info_name,
+                    "task_name": task["name"],
+                    "task_result": task["result"],
+                    "schema": task["kwargs"].get('schema_name', None)
+                }
+            )
+    logger.info(_("%(name)s stopped monitoring results") % {"name": proc_name})
 
 
-def save_task(task, broker):
+def save_task(task, broker: Broker):
     """
     Saves the task package to Django or the cache
+    :param task: the task package
+    :type broker: brokers.Broker
     """
     # SAVE LIMIT < 0 : Don't save success
     if not task.get("save", Conf.SAVE_LIMIT >= 0) and task["success"]:
@@ -510,6 +628,7 @@ def save_task(task, broker):
         )
     # SAVE LIMIT > 0: Prune database, SAVE_LIMIT 0: No pruning
     close_old_django_connections()
+
     try:
 
         kwargs = task.get('kwargs', {})
@@ -602,8 +721,8 @@ def save_cached(task, broker):
                 )
         # save the task
         broker.cache.set(task_key, SignedPackage.dumps(task), timeout)
-    except Exception as e:
-        logger.error(e)
+    except Exception:
+        logger.exception("Could not save task result")
 
 
 def scheduler(broker=None):
@@ -620,11 +739,20 @@ def scheduler(broker=None):
     try:
         for tenant in tenant_model.objects.exclude(schema_name__in=django_tenants_to_exclude):
             with schema_context(tenant.schema_name):
-                with db.transaction.atomic():
+
+                # Only default cluster will handler schedule with default(null) cluster
+                Q_default = (
+                    db.models.Q(cluster__isnull=True)
+                    if Conf.CLUSTER_NAME == Conf.PREFIX
+                    else db.models.Q(pk__in=[])
+                )
+
+                with db.transaction.atomic(using=db.router.db_for_write(Schedule)):
                     for s in (
                         Schedule.objects.select_for_update()
                         .exclude(repeats=0)
                         .filter(next_run__lt=timezone.now())
+                        .filter(Q_default | db.models.Q(cluster=Conf.CLUSTER_NAME))
                     ):
                         args = ()
                         kwargs = {}
@@ -632,73 +760,84 @@ def scheduler(broker=None):
                         if s.kwargs:
                             try:
                                 # eval should be safe here because dict()
-                                kwargs = eval(f"dict({s.kwargs})")
-                            except SyntaxError:
-                                kwargs = {}
+                                kwargs = ast.literal_eval(s.kwargs)
+                            except (SyntaxError, ValueError):
+                                try:
+                                    parsed_kwargs = (
+                                        ast.parse(f"f({s.kwargs})").body[0].value.keywords
+                                    )
+                                    kwargs = {
+                                        kwarg.arg: ast.literal_eval(kwarg.value)
+                                        for kwarg in parsed_kwargs
+                                    }
+                                except (SyntaxError, ValueError):
+                                    kwargs = {}
                         if s.args:
                             args = ast.literal_eval(s.args)
                             # single value won't eval to tuple, so:
                             if type(args) != tuple:
                                 args = (args,)
                         q_options = kwargs.get("q_options", {})
+                        if s.intended_date_kwarg:
+                            kwargs[s.intended_date_kwarg] = s.next_run.isoformat()
                         if s.hook:
                             q_options["hook"] = s.hook
                         # set up the next run time
                         if not s.schedule_type == s.ONCE:
-                            next_run = arrow.get(s.next_run)
+                            next_run = s.next_run
                             while True:
-                                if s.schedule_type == s.MINUTES:
-                                    next_run = next_run.shift(
-                                        minutes=+(s.minutes or 1))
-                                elif s.schedule_type == s.HOURLY:
-                                    next_run = next_run.shift(hours=+1)
-                                elif s.schedule_type == s.DAILY:
-                                    next_run = next_run.shift(days=+1)
-                                elif s.schedule_type == s.WEEKLY:
-                                    next_run = next_run.shift(weeks=+1)
-                                elif s.schedule_type == s.MONTHLY:
-                                    next_run = next_run.shift(months=+1)
-                                elif s.schedule_type == s.QUARTERLY:
-                                    next_run = next_run.shift(months=+3)
-                                elif s.schedule_type == s.YEARLY:
-                                    next_run = next_run.shift(years=+1)
-                                elif s.schedule_type == s.CRON:
-                                    next_run = croniter(s.cron, timezone.datetime.now()).get_next(timezone.datetime)
-                                if Conf.CATCH_UP or next_run > arrow.utcnow():
+                                next_run = s.calculate_next_run(next_run)
+                                if Conf.CATCH_UP or next_run > localtime():
                                     break
-                            if s.schedule_type == s.CRON:
-                                s.next_run = next_run
-                            else:
-                                s.next_run = next_run.datetime
+                            s.next_run = next_run
                             s.repeats += -1
-                        # send it to the cluster
-                        q_options["broker"] = broker
-                        q_options["group"] = q_options.get(
-                            "group", s.name or s.id)
-                        kwargs["q_options"] = q_options
-                        s.task = QUtilities.add_async_task(
-                            s.func, *args, **kwargs)
-                        # log it
-                        if not s.task:
-                            logger.error(
-                                _(
-                                    f"{current_process().name} failed to create a task from schedule [{s.name or s.id}] under tenant {kwargs.get('schema_name', 'UNSPECIFIED')}"
-                                )
+                            # send it to the cluster; any cluster name is allowed in multi-queue scenarios
+                            # because `broker_name` is confusing, using `cluster` name is recommended and takes precedence
+                            q_options["cluster"] = s.cluster or q_options.get(
+                                "cluster", q_options.pop("broker_name", None)
                             )
-                        else:
-                            logger.info(
-                                _(
-                                    f"{current_process().name} created a task from schedule [{s.name or s.id}] under tenant {kwargs.get('schema_name', 'UNSPECIFIED')}"
+                            if (
+                                q_options["cluster"] is None
+                                or q_options["cluster"] == Conf.CLUSTER_NAME
+                            ):
+                                q_options["broker"] = broker
+                            q_options["group"] = q_options.get("group", s.name or s.id)
+                            kwargs["q_options"] = q_options
+                            s.task = QUtilities.add_async_task(s.func, *args, **kwargs)
+                            # log it
+                            if not s.task:
+                                logger.error(
+                                    _(
+                                        "%(process_name)s failed to create a task from schedule for %(tenant)s "
+                                        "[%(schedule)s]"
+                                    )
+                                    % {
+                                        "process_name": current_process().name,
+                                        "schedule": s.name or s.id,
+                                        "tenant": tenant.schema_name
+                                    }
                                 )
-                            )
-                        # default behavior is to delete a ONCE schedule
-                        if s.schedule_type == s.ONCE:
-                            if s.repeats < 0:
-                                s.delete()
-                                continue
-                            # but not if it has a positive repeats
-                            s.repeats = 0
-                        # save the schedule
-                        s.save()
-    except Exception as e:
-        logger.error(e)
+                            else:
+                                logger.info(
+                                    _(
+                                        "%(process_name)s created task %(task_name)s from schedule for %(tenant)s "
+                                        "[%(schedule)s]"
+                                    )
+                                    % {
+                                        "process_name": current_process().name,
+                                        "task_name": humanize(s.task),
+                                        "schedule": s.name or s.id,
+                                        "tenant": tenant.schema_name
+                                    }
+                                )
+                            # default behavior is to delete a ONCE schedule
+                            if s.schedule_type == s.ONCE:
+                                if s.repeats < 0:
+                                    s.delete()
+                                    continue
+                                # but not if it has a positive repeats
+                                s.repeats = 0
+                            # save the schedule
+                            s.save()
+    except Exception:
+        logger.exception("Could not create task from schedule")
