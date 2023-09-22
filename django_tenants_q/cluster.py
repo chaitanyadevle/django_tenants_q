@@ -472,7 +472,7 @@ def worker(
             # Get the function from the task
             func_name = get_func_repr(f)
             task_name = task["name"]
-            schema_name = kwargs.get('schema_name', None)
+            schema_name = task["kwargs"].get('schema_name', None)
             task_desc = _("%(proc_name)s processing %(task_name)s '%(func_name)s' on %(schema_name)s") % {
                 "proc_name": proc_name,
                 "func_name": func_name,
