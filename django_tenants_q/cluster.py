@@ -32,12 +32,8 @@ from django_q.brokers.orm import ORM
 from django_q.cluster import set_cpu_affinity
 from django_q.conf import Conf, get_ppid, logger, psutil, setproctitle
 from django_q.humanhash import humanize
-from django_q.models import Schedule, Success, Task
 from django_q.queues import Queue
-from django_q.signals import pre_execute
-from django_q.signing import BadSignature, SignedPackage
 from django_q.status import Stat, Status
-from django_q.utils import close_old_django_connections
 
 
 class MultiTenantCluster(object):
