@@ -466,16 +466,17 @@ def worker(
             timer.value = -1  # Idle
             task_count += 1
             # Get the function from the task
-            logger.info(_(f'{proc_name} processing [{task["name"]}]'))
+            logger.info(_(f'{proc_name} processing [{task["name"]}] on {schema_name}'))
             f = task["func"]
             # Log task creation and set process name
             # Get the function from the task
             func_name = get_func_repr(f)
             task_name = task["name"]
-            task_desc = _("%(proc_name)s processing %(task_name)s '%(func_name)s'") % {
+            task_desc = _("%(proc_name)s processing %(task_name)s '%(func_name)s' on %(schema_name)s") % {
                 "proc_name": proc_name,
                 "func_name": func_name,
                 "task_name": task_name,
+                "schema_name": schema_name,
             }
             if "group" in task:
                 task_desc += f" [{task['group']}]"
@@ -589,17 +590,18 @@ def monitor(result_queue: Queue, broker: Broker = None):
         if task["success"]:
             # log success
             logger.info(
-                _("Processed '%(info_name)s' (%(task_name)s)")
-                % {"info_name": info_name, "task_name": task["name"]}
+                _("Processed '%(info_name)s' (%(task_name)s) on %(schema)s")
+                % {"info_name": info_name, "task_name": task["name"], "schema": task["kwargs"].get('schema_name', None)}
             )
         else:
             # log failure
             logger.error(
-                _("Failed '%(info_name)s' (%(task_name)s) - %(task_result)s")
+                _("Failed '%(info_name)s' (%(task_name)s) - %(task_result)s on %(schema)s")
                 % {
                     "info_name": info_name,
                     "task_name": task["name"],
                     "task_result": task["result"],
+                    "schema": task["kwargs"].get('schema_name', None)
                 }
             )
     logger.info(_("%(name)s stopped monitoring results") % {"name": proc_name})
@@ -805,24 +807,26 @@ def scheduler(broker=None):
                             if not s.task:
                                 logger.error(
                                     _(
-                                        "%(process_name)s failed to create a task from schedule "
+                                        "%(process_name)s failed to create a task from schedule for %(tenant)s "
                                         "[%(schedule)s]"
                                     )
                                     % {
                                         "process_name": current_process().name,
                                         "schedule": s.name or s.id,
+                                        "tenant": tenant.schema_name
                                     }
                                 )
                             else:
                                 logger.info(
                                     _(
-                                        "%(process_name)s created task %(task_name)s from schedule "
+                                        "%(process_name)s created task %(task_name)s from schedule for %(tenant)s "
                                         "[%(schedule)s]"
                                     )
                                     % {
                                         "process_name": current_process().name,
                                         "task_name": humanize(s.task),
                                         "schedule": s.name or s.id,
+                                        "tenant": tenant.schema_name
                                     }
                                 )
                             # default behavior is to delete a ONCE schedule
