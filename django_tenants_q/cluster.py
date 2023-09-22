@@ -835,5 +835,7 @@ def scheduler(broker=None):
                                 s.repeats = 0
                             # save the schedule
                             s.save()
+            except Exception as e:
+                logger.critical(e)
     except Exception:
         logger.exception("Could not create task from schedule")
