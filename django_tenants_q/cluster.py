@@ -5,7 +5,6 @@ from __future__ import (absolute_import, division, print_function,
 # Standard
 import pydoc
 import ast
-import importlib
 import signal
 import socket
 import traceback
@@ -14,9 +13,6 @@ from inspect import getfullargspec
 from multiprocessing import Event, Process, Value, current_process
 from time import sleep
 
-# external
-import arrow
-from croniter import croniter
 # Django
 from django import core, db
 from django.apps.registry import apps
@@ -43,7 +39,7 @@ from django_q.queues import Queue
 from django_q.signals import pre_execute, post_spawn, post_execute
 from django_q.signing import BadSignature, SignedPackage
 from django_q.status import Stat, Status
-from django_q.utils import close_old_django_connections, get_func_repr
+from django_q.utils import close_old_django_connections, get_func_repr, localtime
 
 from django_tenants_q.utils import QUtilities
 
