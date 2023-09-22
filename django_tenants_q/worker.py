@@ -6,18 +6,8 @@ from multiprocessing.process import current_process
 from multiprocessing.queues import Queue
 
 # Django
-from django import core
-from django.apps.registry import apps
-
-try:
-    apps.check_apps_ready()
-except core.exceptions.AppRegistryNotReady:
-    import django
-
-    django.setup()
-
 from django.utils import timezone
-from django.utils.translation import gettext_lazy as _
+from django.utils.translation import ugettext_lazy as _
 from django_q.conf import Conf, error_reporter, logger, resource, setproctitle
 from django_q.signals import post_spawn, pre_execute
 from django_q.utils import get_func_repr, close_old_django_connections

@@ -6,20 +6,13 @@ from __future__ import (absolute_import, division, print_function,
 from multiprocessing import  current_process
 
 # Django
-from django import core, db
-from django.apps.registry import apps
+from django import db
 from django_tenants.utils import schema_context
 
-try:
-    apps.check_apps_ready()
-except core.exceptions.AppRegistryNotReady:
-    import django
-
-    django.setup()
 
 from django_q.signals import post_execute
 from django_q.conf import Conf, logger, setproctitle
-from django.utils.translation import gettext_lazy as _
+from django.utils.translation import ugettext_lazy as _
 from django_q.brokers import get_broker, Broker
 from django_q.conf import Conf, logger
 from django_q.models import Success, Task

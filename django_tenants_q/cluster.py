@@ -10,22 +10,14 @@ from multiprocessing import Event, Process, Value, current_process
 from time import sleep
 
 # Django
-from django import core, db
-from django.apps.registry import apps
-
-try:
-    apps.check_apps_ready()
-except core.exceptions.AppRegistryNotReady:
-    import django
-
-    django.setup()
+from django import db
 
 from django_tenants_q.monitor import monitor
 from django_tenants_q.scheduler import scheduler
 from django_tenants_q.worker import worker
 
 from django.utils import timezone
-from django.utils.translation import gettext_lazy as _
+from django.utils.translation import ugettext_lazy as _
 from django_q.brokers import Broker, get_broker
 from django_q.pusher import pusher
 from django_q.brokers.orm import ORM
