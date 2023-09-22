@@ -21,13 +21,13 @@ except core.exceptions.AppRegistryNotReady:
     django.setup()
 
 from django_tenants_q.monitor import monitor
-from django_tenants_q.pusher import pusher
 from django_tenants_q.scheduler import scheduler
 from django_tenants_q.worker import worker
 
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django_q.brokers import Broker, get_broker
+from django_q.pusher import pusher
 from django_q.brokers.orm import ORM
 from django_q.cluster import set_cpu_affinity
 from django_q.conf import Conf, get_ppid, logger, psutil, setproctitle
