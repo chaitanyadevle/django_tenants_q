@@ -46,7 +46,8 @@ from django_q.status import Stat, Status
 from django_q.models import Task, Success, Schedule
 from django_q.signing import SignedPackage, BadSignature
 from django_q.conf import Conf, logger, psutil, get_ppid, error_reporter
-from django_q.cluster import close_old_django_connections, set_cpu_affinity
+from django_q.cluster import set_cpu_affinity
+from django_q.utils import close_old_django_connections
 from django_tenants_q.utils import QUtilities
 
 
