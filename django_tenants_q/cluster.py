@@ -1,8 +1,8 @@
 # Future
-from __future__ import (absolute_import, division, print_function,
-                        unicode_literals)
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 import ast
+
 # Standard
 import pydoc
 import signal
@@ -34,23 +34,30 @@ from django.utils.translation import gettext_lazy as _
 from django_q.brokers import Broker, get_broker
 from django_q.brokers.orm import ORM
 from django_q.cluster import set_cpu_affinity
-from django_q.conf import (Conf, error_reporter, get_ppid, logger, psutil,
-                           resource, setproctitle)
+from django_q.conf import (
+    Conf,
+    error_reporter,
+    get_ppid,
+    logger,
+    psutil,
+    resource,
+    setproctitle,
+)
 from django_q.humanhash import humanize
 from django_q.models import Schedule, Success, Task
+
 # Local
 from django_q.queues import Queue
 from django_q.signals import post_execute, post_spawn, pre_execute
 from django_q.signing import BadSignature, SignedPackage
 from django_q.status import Stat, Status
-from django_q.utils import (close_old_django_connections, get_func_repr,
-                            localtime)
+from django_q.utils import close_old_django_connections, get_func_repr, localtime
 from opencensus.ext.azure.log_exporter import AzureLogHandler
 
 from django_tenants_q.utils import QUtilities
 
 # Logging Setup
-logger = logging.getLogger(__name__)
+
 
 class MultiTenantCluster(object):
 
@@ -71,7 +78,6 @@ class MultiTenantCluster(object):
         self.timeout = None
         signal.signal(signal.SIGTERM, self.sig_handler)
         signal.signal(signal.SIGINT, self.sig_handler)
-        logger.addHandler(AzureLogHandler(connection_string=f'InstrumentationKey={settings.APPINSIGHTS_INSTRUMENTATION_KEY}'))
 
     def start(self) -> int:
         if setproctitle:
@@ -192,7 +198,7 @@ class Sentinel(object):
     def queue_name(self):
         # multi-queue: cluster name is (broker's) queue_name
         return self.broker.list_key if self.broker else "--"
-    
+
     def start(self):
         self.broker.ping()
         self.spawn_cluster()
@@ -228,8 +234,7 @@ class Sentinel(object):
 
     def spawn_worker(self):
         self.spawn_process(
-            worker, self.task_queue, self.result_queue, Value(
-                "f", -1), self.timeout
+            worker, self.task_queue, self.result_queue, Value("f", -1), self.timeout
         )
 
     def spawn_monitor(self) -> Process:
@@ -481,8 +486,10 @@ def worker(
             # Get the function from the task
             func_name = get_func_repr(f)
             task_name = task["name"]
-            schema_name = task["kwargs"].get('schema_name', None)
-            task_desc = _("%(proc_name)s processing %(task_name)s '%(func_name)s' on %(schema_name)s") % {
+            schema_name = task["kwargs"].get("schema_name", None)
+            task_desc = _(
+                "%(proc_name)s processing %(task_name)s '%(func_name)s' on %(schema_name)s"
+            ) % {
                 "proc_name": proc_name,
                 "func_name": func_name,
                 "task_name": task_name,
@@ -493,7 +500,9 @@ def worker(
             logger.info(task_desc)
 
             if setproctitle:
-                proc_title = f"qcluster {proc_name} processing {task_name} '{func_name}'"
+                proc_title = (
+                    f"qcluster {proc_name} processing {task_name} '{func_name}'"
+                )
                 if "group" in task:
                     proc_title += f" [{task['group']}]"
                 setproctitle.setproctitle(proc_title)
@@ -508,8 +517,7 @@ def worker(
             pre_execute.send(sender="django_q", func=f, task=task)
             # execute the payload
             timer.value = timer_value  # Busy
-            
-            
+
             if not result:
                 close_old_django_connections()
                 timer_value = task.pop("timeout", timeout)
@@ -518,16 +526,13 @@ def worker(
                 # execute the payload
                 timer.value = timer_value  # Busy
                 try:
-
                     # Checking for the presence of kwargs
                     args_state = getfullargspec(f)
 
-                    kwargs = task.get('kwargs', {})
-                    schema_name = kwargs.get('schema_name', None)
+                    kwargs = task.get("kwargs", {})
+                    schema_name = kwargs.get("schema_name", None)
                     if schema_name:
-
                         with schema_context(schema_name):
-
                             if args_state.varkw:
                                 res = f(*task["args"], **task["kwargs"])
                             else:
@@ -560,6 +565,7 @@ def worker(
     except Exception as e:
         print(e)
 
+
 def rss_check():
     if Conf.MAX_RSS:
         if resource:
@@ -567,6 +573,7 @@ def rss_check():
         elif psutil:
             return psutil.Process().memory_info().rss >= Conf.MAX_RSS * 1024
     return False
+
 
 def monitor(result_queue: Queue, broker: Broker = None):
     """
@@ -601,17 +608,23 @@ def monitor(result_queue: Queue, broker: Broker = None):
             # log success
             logger.info(
                 _("Processed '%(info_name)s' (%(task_name)s) on %(schema)s")
-                % {"info_name": info_name, "task_name": task["name"], "schema": task["kwargs"].get('schema_name', None)}
+                % {
+                    "info_name": info_name,
+                    "task_name": task["name"],
+                    "schema": task["kwargs"].get("schema_name", None),
+                }
             )
         else:
             # log failure
             logger.error(
-                _("Failed '%(info_name)s' (%(task_name)s) - %(task_result)s on %(schema)s")
+                _(
+                    "Failed '%(info_name)s' (%(task_name)s) - %(task_result)s on %(schema)s"
+                )
                 % {
                     "info_name": info_name,
                     "task_name": task["name"],
                     "task_result": task["result"],
-                    "schema": task["kwargs"].get('schema_name', None)
+                    "schema": task["kwargs"].get("schema_name", None),
                 }
             )
     logger.info(_("%(name)s stopped monitoring results") % {"name": proc_name})
@@ -639,21 +652,17 @@ def save_task(task, broker: Broker):
     close_old_django_connections()
 
     try:
-
-        kwargs = task.get('kwargs', {})
-        schema_name = kwargs.get('schema_name', None)
+        kwargs = task.get("kwargs", {})
+        schema_name = kwargs.get("schema_name", None)
 
         if schema_name:
-
             with schema_context(schema_name):
-
                 if task["success"] and 0 < Conf.SAVE_LIMIT <= Success.objects.count():
                     Success.objects.last().delete()
                 # check if this task has previous results
 
                 if Task.objects.filter(id=task["id"], name=task["name"]).exists():
-                    existing_task = Task.objects.get(
-                        id=task["id"], name=task["name"])
+                    existing_task = Task.objects.get(id=task["id"], name=task["name"])
                     # only update the result if it hasn't succeeded yet
                     if not existing_task.success:
                         existing_task.stopped = task["stopped"]
@@ -675,8 +684,7 @@ def save_task(task, broker: Broker):
                         success=task["success"],
                     )
         else:
-
-            logger.error('No schema name provided for saving the task')
+            logger.error("No schema name provided for saving the task")
 
     except Exception as e:
         logger.error(e)
@@ -743,12 +751,14 @@ def scheduler(broker=None):
     close_old_django_connections()
     tenant_model = get_tenant_model()
     django_tenants_to_exclude = getattr(
-        settings, 'SCHEMAS_TO_BE_EXCLUDED_BY_SCHEDULER', ['public'])
+        settings, "SCHEMAS_TO_BE_EXCLUDED_BY_SCHEDULER", ["public"]
+    )
 
     try:
-        for tenant in tenant_model.objects.exclude(schema_name__in=django_tenants_to_exclude):
+        for tenant in tenant_model.objects.exclude(
+            schema_name__in=django_tenants_to_exclude
+        ):
             with schema_context(tenant.schema_name):
-
                 # Only default cluster will handler schedule with default(null) cluster
                 Q_default = (
                     db.models.Q(cluster__isnull=True)
@@ -773,7 +783,9 @@ def scheduler(broker=None):
                             except (SyntaxError, ValueError):
                                 try:
                                     parsed_kwargs = (
-                                        ast.parse(f"f({s.kwargs})").body[0].value.keywords
+                                        ast.parse(f"f({s.kwargs})")
+                                        .body[0]
+                                        .value.keywords
                                     )
                                     kwargs = {
                                         kwarg.arg: ast.literal_eval(kwarg.value)
@@ -823,7 +835,7 @@ def scheduler(broker=None):
                                     % {
                                         "process_name": current_process().name,
                                         "schedule": s.name or s.id,
-                                        "tenant": tenant.schema_name
+                                        "tenant": tenant.schema_name,
                                     }
                                 )
                             else:
@@ -836,7 +848,7 @@ def scheduler(broker=None):
                                         "process_name": current_process().name,
                                         "task_name": humanize(s.task),
                                         "schedule": s.name or s.id,
-                                        "tenant": tenant.schema_name
+                                        "tenant": tenant.schema_name,
                                     }
                                 )
                             # default behavior is to delete a ONCE schedule
