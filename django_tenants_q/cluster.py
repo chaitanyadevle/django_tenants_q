@@ -2,9 +2,9 @@
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
+import ast
 # Standard
 import pydoc
-import ast
 import signal
 import socket
 import traceback
@@ -25,24 +25,32 @@ except core.exceptions.AppRegistryNotReady:
 
     django.setup()
 
+# Logging tools
+import logging
+
 from django.conf import settings
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django_q.brokers import Broker, get_broker
 from django_q.brokers.orm import ORM
 from django_q.cluster import set_cpu_affinity
-from django_q.conf import Conf, error_reporter, get_ppid, logger, psutil, setproctitle, resource
+from django_q.conf import (Conf, error_reporter, get_ppid, logger, psutil,
+                           resource, setproctitle)
 from django_q.humanhash import humanize
 from django_q.models import Schedule, Success, Task
 # Local
 from django_q.queues import Queue
-from django_q.signals import pre_execute, post_spawn, post_execute
+from django_q.signals import post_execute, post_spawn, pre_execute
 from django_q.signing import BadSignature, SignedPackage
 from django_q.status import Stat, Status
-from django_q.utils import close_old_django_connections, get_func_repr, localtime
+from django_q.utils import (close_old_django_connections, get_func_repr,
+                            localtime)
+from opencensus.ext.azure.log_exporter import AzureLogHandler
 
 from django_tenants_q.utils import QUtilities
 
+# Logging Setup
+logger = logging.getLogger(__name__)
 
 class MultiTenantCluster(object):
 
@@ -63,6 +71,7 @@ class MultiTenantCluster(object):
         self.timeout = None
         signal.signal(signal.SIGTERM, self.sig_handler)
         signal.signal(signal.SIGINT, self.sig_handler)
+        logger.addHandler(AzureLogHandler(connection_string=f'InstrumentationKey={settings.APPINSIGHTS_INSTRUMENTATION_KEY}'))
 
     def start(self) -> int:
         if setproctitle:
