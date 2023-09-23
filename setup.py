@@ -25,7 +25,6 @@ setuptools.setup(
         "django-tenants>=3.3.2",
         "django-q2>=1.5.5",
         "croniter>=1.0.15",
-        "opencensus-ext-azure>=1.1.10",
     ]
 )
  
