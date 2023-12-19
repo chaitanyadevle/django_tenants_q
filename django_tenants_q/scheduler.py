@@ -94,8 +94,15 @@ def scheduler(broker=None):
                                 next_run = s.calculate_next_run(next_run)
                                 if Conf.CATCH_UP or next_run > localtime():
                                     break
-                            s.next_run = next_run
-                            s.repeats += -1
+                                s.next_run = next_run
+
+                            # Little Fix for already broken numbers
+                            if s.repeats < -1:
+                                s.repeats = -1
+                            
+                            # Check if the value is not zero
+                            if s.repeats > 0:
+                                s.repeats -= 1
                             # send it to the cluster; any cluster name is allowed in multi-queue scenarios
                             # because `broker_name` is confusing, using `cluster` name is recommended and takes precedence
                             q_options["cluster"] = s.cluster or q_options.get(
