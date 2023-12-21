@@ -97,7 +97,7 @@ def scheduler(broker=None):
                                 s.next_run = next_run
 
                                 # Little Fix for already broken numbers
-                                if s.repeats < -1:
+                                if s.repeats <= -1:
                                     s.repeats = -1
 
                                 # Check if the value is not zero
