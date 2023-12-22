@@ -88,7 +88,7 @@ def scheduler(broker=None):
                         if s.hook:
                             q_options["hook"] = s.hook
                         # set up the next run time
-                        if not s.schedule_type == s.ONCE:
+                        if not s.schedule_type != s.ONCE:
                             next_run = s.next_run
                             while True:
                                 next_run = s.calculate_next_run(next_run)
@@ -97,7 +97,7 @@ def scheduler(broker=None):
                                 s.next_run = next_run
 
                                 # Little Fix for already broken numbers
-                                if s.repeats <= -1:
+                                if s.repeats < -1:
                                     s.repeats = -1
 
                                 # Check if the value is not zero
