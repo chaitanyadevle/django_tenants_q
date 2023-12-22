@@ -93,7 +93,8 @@ def scheduler(broker=None):
                             while True:
                                 next_run = s.calculate_next_run(next_run)
                                 if Conf.CATCH_UP or next_run > localtime():
-                                    break
+                                    # Update next_run to be ahead of the localtime function
+                                    next_run = localtime() + s.calculate_next_run()
                                 s.next_run = next_run
 
                                 # Little Fix for already broken numbers
