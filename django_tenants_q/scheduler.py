@@ -88,23 +88,22 @@ def scheduler(broker=None):
                         if s.hook:
                             q_options["hook"] = s.hook
                         # set up the next run time
-                        if not s.schedule_type != s.ONCE:
+                        if s.schedule_type != s.ONCE:
                             next_run = s.next_run
                             while True:
                                 next_run = s.calculate_next_run(next_run)
                                 if Conf.CATCH_UP or next_run > localtime():
-                                    # Update next_run to be ahead of the localtime function
-                                    next_run = localtime()
-                                    next_run = s.calculate_next_run(next_run)
-                                s.next_run = next_run
+                                    break
 
-                                # Little Fix for already broken numbers
-                                if s.repeats < -1:
-                                    s.repeats = -1
+                            s.next_run = next_run
 
-                                # Check if the value is not zero
-                                if s.repeats > 0:
-                                    s.repeats -= 1
+                            # Little Fix for already broken numbers
+                            if s.repeats < -1:
+                                s.repeats = -1
+                            
+                            # Check if the value is not zero
+                            if s.repeats > 0:
+                                s.repeats -= 1
 
                             # send it to the cluster; any cluster name is allowed in multi-queue scenarios
                             # because `broker_name` is confusing, using `cluster` name is recommended and takes precedence
