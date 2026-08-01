@@ -13,7 +13,7 @@ except core.exceptions.AppRegistryNotReady:
     django.setup()
 
 from django_q.brokers import Broker, get_broker
-from django_q.conf import Conf, logger, setproctitle
+from django_q.conf import Conf, error_reporter, logger, setproctitle
 from django_q.models import Success, Task
 from django_q.signals import post_execute
 from django_q.signing import SignedPackage
@@ -92,7 +92,12 @@ def save_task(task, broker: Broker):
     # SAVE LIMIT < 0 : Don't save success
     if not task.get("save", Conf.SAVE_LIMIT >= 0) and task["success"]:
         return
+    kwargs = task.get("kwargs", {})
+    schema_name = kwargs.get("schema_name", None)
     # enqueues next in a chain
+    # schema_name must be passed explicitly here: this call happens on the
+    # monitor's own connection, which is not (and must not be assumed to be)
+    # sitting in the schema the task that just finished ran in.
     if task.get("chain", None):
         QUtilities.create_async_tasks_chain(
             task["chain"],
@@ -100,14 +105,13 @@ def save_task(task, broker: Broker):
             cached=task["cached"],
             sync=task["sync"],
             broker=broker,
+            schema_name=schema_name,
         )
     # SAVE LIMIT > 0: Prune database, SAVE_LIMIT 0: No pruning
-    close_old_django_connections()
+    if not task.get("sync", False):
+        close_old_django_connections()
 
     try:
-        kwargs = task.get("kwargs", {})
-        schema_name = kwargs.get("schema_name", None)
-
         if schema_name:
             with schema_context(schema_name):
                 # check SAVE_LIMIT_PER filters (per group/name/func) to prune correctly
@@ -162,6 +166,7 @@ def save_task(task, broker: Broker):
                         hook=task.get("hook"),
                         args=task["args"],
                         kwargs=task["kwargs"],
+                        cluster=task.get("cluster"),
                         started=task["started"],
                         stopped=task["stopped"],
                         result=task["result"],
@@ -189,7 +194,25 @@ def save_task(task, broker: Broker):
                     # nothing to acknowledge
                     pass
         else:
-            logger.error("No schema name provided for saving the task")
+            # There's no correct schema to persist this into (django_q's
+            # tables only exist per-tenant), so the result would otherwise
+            # vanish with nothing but this log line. Surface it loudly.
+            logger.error(
+                "No schema_name provided for saving task result "
+                "(id=%(id)s, name=%(name)s, func=%(func)s); result was not "
+                "persisted."
+                % {
+                    "id": task.get("id"),
+                    "name": task.get("name"),
+                    "func": get_func_repr(task.get("func")),
+                }
+            )
+            if error_reporter:
+                try:
+                    error_reporter.report()
+                except Exception:
+                    # Don't let reporting failures crash the monitor
+                    pass
 
     except Exception:
         logger.exception("Could not save task result")
@@ -203,13 +226,18 @@ def save_cached(task, broker):
     try:
         group = task.get("group", None)
         iter_count = task.get("iter_count", 0)
+        schema_name = task.get("kwargs", {}).get("schema_name")
+        # namespace group cache keys by schema so groups from different
+        # tenants (e.g. two schedules that both default to group=1) can
+        # never collide in a shared cache backend
+        group_ns = f"{schema_name}:{group}" if schema_name else group
         # if it's a group append to the group list
         if group:
-            group_key = f"{broker.list_key}:{group}:keys"
+            group_key = f"{broker.list_key}:{group_ns}:keys"
             group_list = broker.cache.get(group_key) or []
             # if it's an iter group, check if we are ready
             if iter_count and len(group_list) == iter_count - 1:
-                group_args = f"{broker.list_key}:{group}:args"
+                group_args = f"{broker.list_key}:{group_ns}:args"
                 # collate the results into a Task result
                 results = [
                     SignedPackage.loads(broker.cache.get(k))["result"]
@@ -240,6 +268,7 @@ def save_cached(task, broker):
                     cached=task["cached"],
                     sync=task["sync"],
                     broker=broker,
+                    schema_name=schema_name,
                 )
         # save the task
         broker.cache.set(task_key, SignedPackage.dumps(task), timeout)

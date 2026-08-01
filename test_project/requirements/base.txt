@@ -1,4 +1,4 @@
 hiredis
 django_redis
-psycopg2-binary==2.8.4
-git+git://github.com/chaitanyadevle/django_tenants_q
+psycopg2-binary>=2.9.9
+git+https://github.com/mast3rbow/django_tenants_q.git

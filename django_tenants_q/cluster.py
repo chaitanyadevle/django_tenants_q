@@ -1,6 +1,3 @@
-# Future
-from __future__ import absolute_import, division, print_function, unicode_literals
-
 # Standard
 import os
 import signal
@@ -29,15 +26,10 @@ from django_q.conf import (
     Conf,
     get_ppid,
     logger,
+    prometheus_multiprocess,
     psutil,
     setproctitle,
 )
-
-# Optional Prometheus multiprocess support (upstream v1.8.0)
-try:
-    from django_q.conf import prometheus_multiprocess
-except Exception:
-    prometheus_multiprocess = None
 from django_q.humanhash import humanize
 
 # Local
@@ -76,7 +68,11 @@ class MultiTenantCluster(object):
             setproctitle.setproctitle(f"qcluster {current_process().name} {self.name}")
         # Start Sentinel
 
-        if isinstance(self.broker, ORM):
+        # Resolve the broker the same way the Sentinel will, so an ORM broker
+        # configured via Q_CLUSTER settings (rather than passed to the
+        # constructor) is also caught.
+        resolved_broker = self.broker or get_broker()
+        if isinstance(resolved_broker, ORM):
             logger.info(_("Django ORM broker is not supported"))
             return
 
@@ -152,7 +148,7 @@ class MultiTenantCluster(object):
         return (
             self.start_event is None
             and self.stop_event is None
-            and self.sentinel is None
+            and self.sentinel is not None
         )
 
 
