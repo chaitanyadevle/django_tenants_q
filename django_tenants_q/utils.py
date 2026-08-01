@@ -13,15 +13,17 @@ from django_q.brokers import get_broker
 from django_q.signals import pre_enqueue
 from django_q.signing import SignedPackage
 from django_tenants.utils import schema_context
-from django_q.tasks import (schedule,
-                            result,
-                            result_group,
-                            fetch,
-                            fetch_group,
-                            count_group,
-                            delete_group,
-                            delete_cached,
-                            queue_size)
+from django_q.tasks import (
+    schedule,
+    result,
+    result_group,
+    fetch,
+    fetch_group,
+    count_group,
+    delete_group,
+    delete_cached,
+    queue_size,
+)
 
 
 class QUtilities(object):
@@ -106,45 +108,35 @@ class QUtilities(object):
 
     @staticmethod
     def get_result(task_id, wait=0, cached=Conf.CACHED):
-        # Wrapper method to get result of a task with awareness of schema
-        schema_name = connection.schema_name
-        with schema_context(schema_name):
-            return result(task_id, wait, cached)
+        # These read helpers operate on whatever schema the caller is
+        # already in (connection.schema_name) - no need to re-enter a
+        # schema_context for the same schema, which only costs a redundant
+        # ContentType cache clear.
+        return result(task_id, wait, cached)
 
     @staticmethod
-    def get_result_group(group_id, failures=False, wait=0, count=None, cached=Conf.CACHED):
-        # Wrapper method to get result of a group with awareness of schema
-        schema_name = connection.schema_name
-        with schema_context(schema_name):
-            return result_group(group_id, failures=False, wait=0, count=None, cached=Conf.CACHED)
+    def get_result_group(
+        group_id, failures=False, wait=0, count=None, cached=Conf.CACHED
+    ):
+        return result_group(group_id, failures, wait, count, cached=cached)
 
     @staticmethod
     def fetch_task(task_id, wait=0, cached=Conf.CACHED):
-        # Wrapper method to fetch a single task with awareness of schema
-        schema_name = connection.schema_name
-        with schema_context(schema_name):
-            return fetch(task_id, wait, cached)
+        return fetch(task_id, wait, cached)
 
     @staticmethod
-    def fetch_task_group(group_id, failures=True, wait=0, count=None, cached=Conf.CACHED):
-        # Wrapper method to get a group with tasks with awareness of schema
-        schema_name = connection.schema_name
-        with schema_context(schema_name):
-            return fetch_group(group_id, failures, wait, count, cached=cached)
+    def fetch_task_group(
+        group_id, failures=True, wait=0, count=None, cached=Conf.CACHED
+    ):
+        return fetch_group(group_id, failures, wait, count, cached=cached)
 
     @staticmethod
     def get_group_count(group_id, failures=False, cached=Conf.CACHED):
-        # Wrapper method to get count of groups with awareness of schema
-        schema_name = connection.schema_name
-        with schema_context(schema_name):
-            return count_group(group_id, failures, cached)
+        return count_group(group_id, failures, cached)
 
     @staticmethod
     def delete_task_group(group_id, tasks=False, cached=Conf.CACHED):
-        # Wrapper method to delete task group with awareness of schema
-        schema_name = connection.schema_name
-        with schema_context(schema_name):
-            return delete_group(group_id, tasks, cached)
+        return delete_group(group_id, tasks, cached)
 
     @staticmethod
     def delete_task_from_cache(task_id, broker=None):
@@ -173,10 +165,14 @@ class QUtilities(object):
         if options.get("cached", None):
             options["iter_cached"] = options["cached"]
         options["cached"] = True
+        # namespace the cache key by schema so groups from different tenants
+        # can never collide in a shared cache backend (e.g. Redis)
+        schema_name = options.get("schema_name") or connection.schema_name
+        group_ns = f"{schema_name}:{iter_group}" if schema_name else iter_group
         # save the original arguments
         broker = options["broker"]
         broker.cache.set(
-            f"{broker.list_key}:{iter_group}:args", SignedPackage.dumps(args_iter)
+            f"{broker.list_key}:{group_ns}:args", SignedPackage.dumps(args_iter)
         )
 
         for args in args_iter:
@@ -186,10 +182,19 @@ class QUtilities(object):
         return iter_group
 
     @staticmethod
-    def create_async_tasks_chain(chain, group=None, cached=Conf.CACHED, sync=Conf.SYNC, broker=None):
+    def create_async_tasks_chain(
+        chain, group=None, cached=Conf.CACHED, sync=Conf.SYNC, broker=None,
+        schema_name=None,
+    ):
         """
         Wrapper method around async_chain that enqueues a chain of tasks
         the chain must be in the format [(func,(args),{kwargs}),(func,(args),{kwargs})]
+
+        :param schema_name: schema the chain should continue running in. Must
+            be passed explicitly by callers that aren't already executing
+            inside the right schema_context (e.g. the monitor process
+            continuing a chain after a previous step finished) - the
+            connection's ambient schema cannot be relied on there.
         """
         if not group:
             group = uuid()[1]
@@ -207,6 +212,8 @@ class QUtilities(object):
         kwargs["cached"] = cached
         kwargs["sync"] = sync
         kwargs["broker"] = broker or get_broker()
+        if schema_name:
+            kwargs.setdefault("schema_name", schema_name)
         QUtilities.add_async_task(task[0], *args, **kwargs)
         return group
 

@@ -1,0 +1,215 @@
+import pydoc
+import traceback
+from multiprocessing import Value
+from multiprocessing.process import current_process
+from multiprocessing.queues import Queue
+import inspect
+
+from django import core
+from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
+from django.apps.registry import apps
+
+try:
+    apps.check_apps_ready()
+except core.exceptions.AppRegistryNotReady:
+    import django
+
+    django.setup()
+
+from django_q.conf import Conf, error_reporter, logger, resource, setproctitle
+from django_q.exceptions import TimeoutException
+from django_q.signals import post_execute_in_worker, post_spawn, pre_execute
+from django_q.timeout import TimeoutHandler
+from django_q.utils import close_old_django_connections, get_func_repr
+from django_tenants.utils import schema_context
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+try:
+    import setproctitle
+except ModuleNotFoundError:
+    setproctitle = None
+
+
+def worker(
+    task_queue: Queue, result_queue: Queue, timer: Value, timeout: int = Conf.TIMEOUT
+):
+    """
+    Takes a task from the task queue, tries to execute it and puts the result back in
+    the result queue
+    :param timeout: number of seconds wait for a worker to finish.
+    :type task_queue: multiprocessing.Queue
+    :type result_queue: multiprocessing.Queue
+    :type timer: multiprocessing.Value
+    """
+
+    proc_name = current_process().name
+    logger.info(
+        _("%(proc_name)s ready for work at %(id)s")
+        % {"proc_name": proc_name, "id": current_process().pid}
+    )
+    post_spawn.send(sender="django_q", proc_name=proc_name)
+    if setproctitle:
+        setproctitle.setproctitle(f"qcluster {proc_name} idle")
+    task_count = 0
+    if timeout is None:
+        timeout = -1
+
+    try:
+        # Start reading the task queue
+
+        for task in iter(task_queue.get, "STOP"):
+            result = None
+            timer.value = -1  # Idle
+            task_count += 1
+            # Get the function from the task
+            logger.info(_(f'{proc_name} processing [{task["name"]}]'))
+            f = task["func"]
+            # Log task creation and set process name
+            # Get the function from the task
+            func_name = get_func_repr(f)
+            task_name = task["name"]
+            schema_name = task["kwargs"].get("schema_name", None)
+            task_desc = _(
+                "%(proc_name)s processing %(task_name)s '%(func_name)s' on %(schema_name)s"
+            ) % {
+                "proc_name": proc_name,
+                "func_name": func_name,
+                "task_name": task_name,
+                "schema_name": schema_name,
+            }
+            if "group" in task:
+                task_desc += f" [{task['group']}]"
+            logger.info(task_desc)
+
+            if setproctitle:
+                proc_title = (
+                    f"qcluster {proc_name} processing {task_name} '{func_name}'"
+                )
+                if "group" in task:
+                    proc_title += f" [{task['group']}]"
+                setproctitle.setproctitle(proc_title)
+
+            # if it's not an instance try to get it from the string
+            if not callable(f):
+                # locate() returns None if f cannot be loaded
+                f = pydoc.locate(f)
+            if not task.get("sync", False):
+                close_old_django_connections()
+            timer_value = task.pop("timeout", timeout)
+            # signal execution
+            pre_execute.send(sender="django_q", func=f, task=task)
+            # execute the payload with a timeout handler
+            timer.value = timer_value  # Busy
+            # Add a small buffer so the guard doesn't kill the process
+            if timer.value != -1:
+                timer.value += 3
+
+            timeout_error = False
+            try:
+                if f is None:
+                    # raise a meaningful error if task['func'] is not a valid function
+                    raise ValueError(f"Function {task['func']} is not defined")
+                kwargs = task.get("kwargs", {})
+                schema_name = kwargs.get("schema_name", None)
+                if not schema_name:
+                    # Tasks must always provide a schema_name for multi-tenant setups
+                    msg = (
+                        f"Missing 'schema_name' in task kwargs for task id={task.get('id')} "
+                        f"name={task.get('name')}"
+                    )
+                    logger.error(msg)
+                    if error_reporter:
+                        try:
+                            error_reporter.report()
+                        except Exception:
+                            # Don't let reporting failures crash the worker
+                            pass
+                    if task.get("sync", False):
+                        # For synchronous tasks, raise so caller can handle the error
+                        raise ValueError(msg)
+                    # For async tasks, mark as failed and continue without executing
+                    result = (msg, False)
+                else:
+                    with TimeoutHandler(timer_value):
+                        with schema_context(schema_name):
+                            # Prepare kwargs according to the function signature so we don't pass unexpected
+                            # framework kwargs (like 'schema_name') to user functions that don't accept them.
+                            call_args = task.get("args", ())
+                            call_kwargs = (task.get("kwargs") or {}).copy()
+                            accept_kwargs = True
+                            try:
+                                sig = inspect.signature(f)
+                                params = sig.parameters
+                                # If the function accepts **kwargs, pass all kwargs through
+                                if any(
+                                    p.kind == inspect.Parameter.VAR_KEYWORD
+                                    for p in params.values()
+                                ):
+                                    accept_kwargs = True
+                                else:
+                                    # Otherwise, only keep kwargs that match parameter names
+                                    allowed = set(params.keys())
+                                    # Remove 'self'/'cls' from allowed for bound methods
+                                    allowed.discard("self")
+                                    allowed.discard("cls")
+                                    call_kwargs = {
+                                        k: v
+                                        for k, v in call_kwargs.items()
+                                        if k in allowed
+                                    }
+                                    accept_kwargs = bool(call_kwargs)
+                            except (ValueError, TypeError):
+                                # Builtins or C extensions may not have a signature; assume they accept kwargs
+                                accept_kwargs = True
+
+                            if accept_kwargs:
+                                res = f(*call_args, **call_kwargs)
+                            else:
+                                res = f(*call_args)
+                    result = (res, True)
+            except (Exception, TimeoutException) as e:
+                if isinstance(e, TimeoutException):
+                    timeout_error = True
+                result = (f"{e} : {traceback.format_exc()}", False)
+                if error_reporter:
+                    error_reporter.report()
+                if task.get("sync", False):
+                    post_execute_in_worker.send(sender="django_q", func=f, task=task)
+                    raise
+            with timer.get_lock():
+                # Process result
+                task["result"] = result[0]
+                task["success"] = result[1]
+                task["stopped"] = timezone.now()
+                post_execute_in_worker.send(sender="django_q", func=f, task=task)
+                result_queue.put(task)
+                if timeout_error:
+                    # force destroy process due to timeout
+                    timer.value = 0
+                    break
+
+                timer.value = -1  # Idle
+                if setproctitle:
+                    setproctitle.setproctitle(f"qcluster {proc_name} idle")
+                # Recycle
+                if task_count == Conf.RECYCLE or rss_check():
+                    timer.value = -2  # Recycled
+                    break
+        logger.info(_("%(proc_name)s stopped doing work") % {"proc_name": proc_name})
+
+    except Exception as e:
+        logger.error(e)
+
+
+def rss_check():
+    if Conf.MAX_RSS:
+        if resource:
+            return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss >= Conf.MAX_RSS
+        elif psutil:
+            return psutil.Process().memory_info().rss >= Conf.MAX_RSS * 1024
+    return False

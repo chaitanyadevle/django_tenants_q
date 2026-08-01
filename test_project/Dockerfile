@@ -1,4 +1,4 @@
-FROM python:3.8-slim as BASE
+FROM python:3.12-slim as BASE
 
 ENV PYTHONUNBUFFERED 1
 
